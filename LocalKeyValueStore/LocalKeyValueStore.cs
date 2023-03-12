@@ -1,9 +1,12 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using BaseX;
 using CustomEntityFramework;
 using CustomEntityFramework.Functions;
 using FrooxEngine;
+using FrooxEngine.CommonAvatar;
+using FrooxEngine.UIX;
 using HarmonyLib;
 using LiteDB;
 using NeosModLoader;
@@ -18,13 +21,14 @@ public class LocalKeyValueStore : NeosMod
     public static ModConfiguration config;
 
 
-    [AutoRegisterConfigKey] public static ModConfigurationKey<string> DATA_PATH_KEY = new(
+    [AutoRegisterConfigKey]
+    public static ModConfigurationKey<string> DATA_PATH_KEY = new ModConfigurationKey<string>(
         "data_path", "The path in which item data will be stored. Changing this setting requires a game restart to apply.",
-        () => Path.Combine(Engine.Current.DataPath, "lkvs")
+        () => Path.Combine(Engine.Current.LocalDB.PermanentPath, "lkvs")
     );
 
 
-    private LiteDatabase _db;
+    private static LiteDatabase _db;
 
     private JsonSerializerSettings _jsonSettings;
 
@@ -36,22 +40,8 @@ public class LocalKeyValueStore : NeosMod
     public override void OnEngineInit()
     {
         var harmony = new Harmony("net.KyuubiYoru.LocalKeyValueStore");
+        harmony.PatchAll();
         config = GetConfiguration();
-
-
-        if (Engine.Current == null)
-        {
-            Msg("Engine.Current is null");
-        }
-        else if (Engine.Current.DataPath == null)
-        {
-            Msg("Engine.Current.LocalDB is null");
-        }
-        else if (Engine.Current.LocalDB.PermanentPath == null)
-        {
-            Msg("Engine.Current.LocalDB.PermanentPath is null");
-        }
-
 
         CustomFunctionLibrary.RegisterFunction(GetFuncName("version"), () => Version);
         CustomFunctionLibrary.RegisterFunction(GetFuncName("write"), Write);
@@ -59,22 +49,28 @@ public class LocalKeyValueStore : NeosMod
         //CustomFunctionLibrary.RegisterFunction("LKVS.Delete", Delete );
 
 
-        string folderPath = Path.Combine(config.GetValue(DATA_PATH_KEY), "lkvs");
-
-        Msg("Path: " + folderPath);
-
-        if (!Directory.Exists(folderPath))
-        {
-            Directory.CreateDirectory(folderPath);
-        }
-
-        string filePath = Path.Combine(folderPath, "lkvs.liteDB");
-
-        //Create liteDB database
-        _db = new LiteDatabase(filePath);
-
         _jsonSettings = GetJsonTypeDefinition();
+        
+        Engine.Current.OnReady += () =>
+        {
+            try
+            {
+                string folderPath = config.GetValue(DATA_PATH_KEY);
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+                string filePath = Path.Combine(folderPath, "lkvs.liteDB");
+                _db = new LiteDatabase(filePath);
+            }
+            catch (Exception e)
+            {
+                Error(e);
+            }
+        };
     }
+
+
 
     private string GetFuncName(string funcName)
     {
@@ -111,8 +107,9 @@ public class LocalKeyValueStore : NeosMod
         return settings;
     }
 
-    private void Write(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default")
+    private void Write(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default", bool saveNonPersistent = false)
     {
+        Msg("Running Write Function");
         DynamicVariable value;
         try
         {
@@ -123,13 +120,32 @@ public class LocalKeyValueStore : NeosMod
             Msg(e);
             return;
         }
-
         try
         {
             var collection = _db.GetCollection<ValueEntry>(Table);
             var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
-            var valueJson = JsonConvert.SerializeObject(value.Value, _jsonSettings);
 
+            string valueJson;
+            if (value.Type == typeof(Slot))
+            {
+                var slot = value.Value as Slot;
+                if (!(slot != null && slot.GetComponentInChildren<SimpleAvatarProtection>(sap => !sap.CanSave) == null))
+                {
+                    if (entry != null)
+                    {
+                        collection.Delete(entry.Id);
+                    }
+                    return;
+                }
+                var savedGraph = slot.SaveObject(DependencyHandling.CollectAssets, saveNonPersistent);
+                valueJson = DataTreeConverter.ToJSON(savedGraph.Root);
+            }
+            else
+            {
+                valueJson = JsonConvert.SerializeObject(value.Value, _jsonSettings);
+            }
+            
+            
             if (entry != null)
             {
                 entry.Value = valueJson;
@@ -146,10 +162,8 @@ public class LocalKeyValueStore : NeosMod
         }
     }
 
-
     private void Read(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default")
     {
-        Msg("Try to get value");
         DynamicVariable value;
         try
         {
@@ -171,6 +185,16 @@ public class LocalKeyValueStore : NeosMod
             try
             {
                 Type type = Type.GetType(entry.Type);
+                
+                if (type == typeof(Slot))
+                {
+                    var dataTreeDictionary = DataTreeConverter.FromJSON(entry.Value);
+                    var slot = _slot.AddSlot("Value");
+                    slot.LoadObject(dataTreeDictionary);
+                    value.Value = slot;
+                    return;
+                }
+                
                 var valueObj = JsonConvert.DeserializeObject(entry.Value, type, _jsonSettings);
                 Msg("Value: " + valueObj + " Type: " + valueObj.GetType() + "");
 

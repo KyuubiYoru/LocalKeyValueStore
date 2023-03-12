@@ -10,7 +10,7 @@ A [NeosModLoader](https://github.com/zkxs/NeosModLoader) mod for [Neos VR](https
 ### Usage
 1. First, add a DynamicVariableSpace named "CF" to a Slot in NeosVR.
 2. Next, add the string variables "Key" and optionally "Table" to the DynamicVariableSpace.
-3. Finally, add any valueVariable "Value" to the DynamicVariableSpace.
+3. Finally, add any valueVariable or the ref Type Slot "Value" to the DynamicVariableSpace.
 
 Once you've set up the DynamicVariableSpace, create a DynamicImpulseTriggerWithValue of type Slot and pass the Slot with the DynamicVariableSpace to it. The tag will determine the action that will be performed:
 
