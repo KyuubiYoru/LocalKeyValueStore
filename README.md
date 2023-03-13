@@ -12,14 +12,16 @@ A [NeosModLoader](https://github.com/zkxs/NeosModLoader) mod for [Neos VR](https
 2. Next, add the string variables "Key" and optionally "Table" to the DynamicVariableSpace.
 3. Finally, add any value type or ref Type Slot variable "Value" to the DynamicVariableSpace.
 
+Note that the table is optional. If you don't specify a table, the table name "default" will be used.
+
 Once you've set up the DynamicVariableSpace, create a DynamicImpulseTriggerWithValue of type Slot and pass the Slot with the DynamicVariableSpace to it. The tag will determine the action that will be performed:
 
-#### To write a value to the database with the specified key and table name, use the tag "cf.lkvs.write". 
+### - To write a value to the database with the specified key and table name, use the tag "cf.lkvs.write". 
 
-#### To read a value from the database with the specified key and table name, use the tag "cf.lkvs.read".
+### - To read a value from the database with the specified key and table name, use the tag "cf.lkvs.read".
 
+You can create a DynamicImpulseReceiverWithValue<Slot> with the tag "cf.lkvs.read" and it will return the Slot containing the CF DynamicVariableSpace. If you read a Slot, it will return the new Slot.
 
-Note that the table is optional. If you don't specify a table, the table name "default" will be used.
 
 You can use the same key to store values of different types (e.g., strings, integers, booleans), but you cannot have the same key storing values of the same type in the same table.
 
