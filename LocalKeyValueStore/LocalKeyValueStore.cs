@@ -21,9 +21,24 @@ public class LocalKeyValueStore : NeosMod
     public static ModConfiguration config;
 
 
-    [AutoRegisterConfigKey] public static ModConfigurationKey<string> DATA_PATH_KEY = new ModConfigurationKey<string>(
+    [AutoRegisterConfigKey] 
+    public static ModConfigurationKey<string> DATA_PATH_KEY = new ModConfigurationKey<string>(
         "data_path", "The path in which item data will be stored. Changing this setting requires a game restart to apply.",
         () => Path.Combine(Engine.Current.LocalDB.PermanentPath, "lkvs")
+    );
+    
+    //Config entry for allowing new entries to be created from public space
+    [AutoRegisterConfigKey]
+    public static ModConfigurationKey<bool> ALLOW_PUBLIC_CREATION_KEY = new ModConfigurationKey<bool>(
+        "allow_public_creation", "Allow new entries to be created from public space.",
+        () => false
+    );
+    
+    //Config entry for ignoring permissions for debug purposes
+    [AutoRegisterConfigKey]
+    public static ModConfigurationKey<bool> IGNORE_PERMISSIONS_KEY = new ModConfigurationKey<bool>(
+        "ignore_permissions", "Ignore permissions for debug purposes.",
+        () => false
     );
 
 
@@ -45,7 +60,9 @@ public class LocalKeyValueStore : NeosMod
         CustomFunctionLibrary.RegisterFunction(GetFuncName("version"), () => Version);
         CustomFunctionLibrary.RegisterFunction(GetFuncName("write"), Write);
         CustomFunctionLibrary.RegisterFunction(GetFuncName("read"), Read);
-        //CustomFunctionLibrary.RegisterFunction("LKVS.Delete", Delete );
+        CustomFunctionLibrary.RegisterFunction(GetFuncName("listTables"), ListTables);
+        CustomFunctionLibrary.RegisterFunction(GetFuncName("listKeys"), ListKeys);
+        
 
 
         _jsonSettings = GetJsonTypeDefinition();
@@ -69,9 +86,6 @@ public class LocalKeyValueStore : NeosMod
             }
         };
     }
-
-
-
     private string GetFuncName(string funcName)
     {
         return DynVarSpaceName + "." + funcName;
@@ -111,6 +125,8 @@ public class LocalKeyValueStore : NeosMod
     {
         try
         {
+            bool isUserspace = _slot.World.IsUserspace();
+            
             DynamicVariable value = _space.GetVariable("Value");
             
             if (value == null)
@@ -120,6 +136,18 @@ public class LocalKeyValueStore : NeosMod
             }
             var collection = _db.GetCollection<ValueEntry>(Table);
             var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+
+            if (!config.GetValue(IGNORE_PERMISSIONS_KEY))
+            {
+                if (!isUserspace && !entry.Permissions.HasFlag(PublicPermissions.Write)) return; // No write permission Todo: Feedback to user that write is not allowed
+
+                if (!isUserspace && entry.Permissions.HasFlag(PublicPermissions.WriteReviewReq))
+                {
+                    //Write to pending collection and commit later from userspace
+                    collection = _db.GetCollection<ValueEntry>(Table + "_Pending");
+                    entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+                }
+            }
 
             string valueJson = "";
             if (value.Type == typeof(Slot))
@@ -152,13 +180,21 @@ public class LocalKeyValueStore : NeosMod
         }
     }
 
-    private Slot Read(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default")
+    private Slot Read(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default", bool ReadPending = true)
     {
         try
         {
+            bool isUserspace = _slot.World.IsUserspace();
             DynamicVariable value = _space.GetVariable("Value");
             var collection = _db.GetCollection<ValueEntry>(Table);
-            var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+            var collectionPending = _db.GetCollection<ValueEntry>(Table + "_Pending");
+            
+            ValueEntry entry = ReadPending
+                ? collectionPending.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName) ?? 
+                  collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName)
+                : collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+            
+            if (!config.GetValue(IGNORE_PERMISSIONS_KEY) && !isUserspace && entry?.Permissions.HasFlag(PublicPermissions.Read) != true) entry = null; // No read permission
             
             if (entry != null)
             {
@@ -189,6 +225,23 @@ public class LocalKeyValueStore : NeosMod
 
         return _slot;
     }
+    
+    //List all tables in the database returns a string with all tables separated by a newline
+    private string ListTables()
+    {
+        //Todo: Add Permissions, need to add metadata to the database
+        var tables = _db.GetCollectionNames();
+        return string.Join(Environment.NewLine, tables);
+    }
+    
+    //List all keys in a table returns a string with all keys,type separated by a newline
+    private string ListKeys(string Table = "Default")
+    {
+        var collection = _db.GetCollection<ValueEntry>(Table);
+        //select all entries where Permissions has List flag if not ignore permissions is set
+        var entries = config.GetValue(IGNORE_PERMISSIONS_KEY) ? collection.FindAll() : collection.Find(x => x.Permissions.HasFlag(PublicPermissions.List));
+        return string.Join(Environment.NewLine, entries.Select(x => $"{x.Key},{x.Type}"));
+    }
 }
 
 [Serializable]
@@ -198,9 +251,23 @@ public class ValueEntry
     public string Key { get; set; }
     public string Value { get; set; }
     public string Type { get; set; }
+    
+    public PublicPermissions Permissions { get; set; }
 
     public override string ToString()
     {
         return $"Key: {Key}, Value: {Value}, Type: {Type}";
     }
 }
+
+//enum for permissions as Flags
+[Flags]
+public enum PublicPermissions
+{
+    None = 0,
+    Read = 1,
+    Write = 2,
+    WriteReviewReq = 4,
+    List = 8,
+}
+
