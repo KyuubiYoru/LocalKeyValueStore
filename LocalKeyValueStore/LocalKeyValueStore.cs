@@ -21,8 +21,7 @@ public class LocalKeyValueStore : NeosMod
     public static ModConfiguration config;
 
 
-    [AutoRegisterConfigKey]
-    public static ModConfigurationKey<string> DATA_PATH_KEY = new ModConfigurationKey<string>(
+    [AutoRegisterConfigKey] public static ModConfigurationKey<string> DATA_PATH_KEY = new ModConfigurationKey<string>(
         "data_path", "The path in which item data will be stored. Changing this setting requires a game restart to apply.",
         () => Path.Combine(Engine.Current.LocalDB.PermanentPath, "lkvs")
     );
@@ -50,7 +49,7 @@ public class LocalKeyValueStore : NeosMod
 
 
         _jsonSettings = GetJsonTypeDefinition();
-        
+
         Engine.Current.OnReady += () =>
         {
             try
@@ -60,6 +59,7 @@ public class LocalKeyValueStore : NeosMod
                 {
                     Directory.CreateDirectory(folderPath);
                 }
+
                 string filePath = Path.Combine(folderPath, "lkvs.liteDB");
                 _db = new LiteDatabase(filePath);
             }
@@ -109,42 +109,32 @@ public class LocalKeyValueStore : NeosMod
 
     private void Write(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default", bool saveNonPersistent = false)
     {
-        Msg("Running Write Function");
-        DynamicVariable value;
         try
         {
-            value = _space.GetVariable("Value");
-        }
-        catch (Exception e)
-        {
-            Msg(e);
-            return;
-        }
-        try
-        {
+            DynamicVariable value = _space.GetVariable("Value");
+            
+            if (value == null)
+            {
+                Error("Value is not defined in the CF DynamicVariableSpace!");
+                return;
+            }
             var collection = _db.GetCollection<ValueEntry>(Table);
             var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
 
-            string valueJson;
+            string valueJson = "";
             if (value.Type == typeof(Slot))
             {
                 var slot = value.Value as Slot;
-                if (!(slot != null && slot.GetComponentInChildren<SimpleAvatarProtection>(sap => !sap.CanSave) == null))
+                if (slot != null && slot.GetComponentInChildren<SimpleAvatarProtection>(sap => !sap.CanSave) == null)
                 {
-                    if (entry != null)
-                    {
-                        collection.Delete(entry.Id);
-                    }
-                    return;
+                    var savedGraph = slot.SaveObject(DependencyHandling.CollectAssets, saveNonPersistent);
+                    valueJson = DataTreeConverter.ToJSON(savedGraph.Root);
                 }
-                var savedGraph = slot.SaveObject(DependencyHandling.CollectAssets, saveNonPersistent);
-                valueJson = DataTreeConverter.ToJSON(savedGraph.Root);
             }
             else
             {
                 valueJson = JsonConvert.SerializeObject(value.Value, _jsonSettings);
             }
-            
             
             if (entry != null)
             {
@@ -162,49 +152,42 @@ public class LocalKeyValueStore : NeosMod
         }
     }
 
-    private void Read(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default")
+    private Slot Read(Slot _slot, DynamicVariableSpace _space, string Key, string Table = "Default")
     {
-        DynamicVariable value;
         try
         {
-            value = _space.GetVariable("Value");
-        }
-        catch (Exception e)
-        {
-            Msg(e);
-            return;
-        }
-
-        var collection = _db.GetCollection<ValueEntry>(Table);
-
-        var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
-
-        if (entry != null)
-        {
-            Msg("Set value: " + entry.Value);
-            try
+            DynamicVariable value = _space.GetVariable("Value");
+            var collection = _db.GetCollection<ValueEntry>(Table);
+            var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+            
+            if (entry != null)
             {
                 Type type = Type.GetType(entry.Type);
-                
+
                 if (type == typeof(Slot))
                 {
                     var dataTreeDictionary = DataTreeConverter.FromJSON(entry.Value);
-                    var slot = _slot.AddSlot("Value");
-                    slot.LoadObject(dataTreeDictionary);
-                    value.Value = slot;
-                    return;
+                    var newSlot = _slot.AddSlot("Value");
+                    newSlot.LoadObject(dataTreeDictionary);
+                    value.Value = newSlot;
+                    return newSlot;
                 }
-                
-                var valueObj = JsonConvert.DeserializeObject(entry.Value, type, _jsonSettings);
-                Msg("Value: " + valueObj + " Type: " + valueObj.GetType() + "");
 
+                var valueObj = JsonConvert.DeserializeObject(entry.Value, type, _jsonSettings);
                 value.Value = Convert.ChangeType(valueObj, type);
             }
-            catch (Exception e)
+            else if (value.Type == typeof(Slot))
             {
-                Msg(e);
+                value.Value = null;
+                return null;
             }
         }
+        catch (Exception e)
+        {
+            Error(e);
+        }
+
+        return _slot;
     }
 }
 
