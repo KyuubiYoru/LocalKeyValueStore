@@ -171,7 +171,10 @@ public class LocalKeyValueStore : NeosMod
             }
             else
             {
-                collection.Insert(new ValueEntry { Key = Key, Value = valueJson, Type = value.Type.AssemblyQualifiedName });
+                if (config.GetValue(ALLOW_PUBLIC_CREATION_KEY))
+                {
+                    collection.Insert(new ValueEntry { Key = Key, Value = valueJson, Type = value.Type.AssemblyQualifiedName });
+                }
             }
         }
         catch (Exception e)
@@ -227,20 +230,20 @@ public class LocalKeyValueStore : NeosMod
     }
     
     //List all tables in the database returns a string with all tables separated by a newline
-    private string ListTables()
+    private void ListTables(ref string Value)
     {
         //Todo: Add Permissions, need to add metadata to the database
         var tables = _db.GetCollectionNames();
-        return string.Join(Environment.NewLine, tables);
+        Value = string.Join(Environment.NewLine, tables);
     }
     
     //List all keys in a table returns a string with all keys,type separated by a newline
-    private string ListKeys(string Table = "Default")
+    private void ListKeys(ref string Value, string Table = "Default")
     {
         var collection = _db.GetCollection<ValueEntry>(Table);
         //select all entries where Permissions has List flag if not ignore permissions is set
         var entries = config.GetValue(IGNORE_PERMISSIONS_KEY) ? collection.FindAll() : collection.Find(x => x.Permissions.HasFlag(PublicPermissions.List));
-        return string.Join(Environment.NewLine, entries.Select(x => $"{x.Key},{x.Type}"));
+        Value = string.Join(Environment.NewLine, entries.Select(x => $"{x.Key},{Type.GetType(x.Type)?.Name}"));
     }
 }
 
