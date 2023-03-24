@@ -6,7 +6,6 @@ using CustomEntityFramework;
 using CustomEntityFramework.Functions;
 using FrooxEngine;
 using FrooxEngine.CommonAvatar;
-using FrooxEngine.UIX;
 using HarmonyLib;
 using LiteDB;
 using NeosModLoader;
@@ -62,10 +61,16 @@ public class LocalKeyValueStore : NeosMod
         CustomFunctionLibrary.RegisterFunction(GetFuncName("read"), Read);
         CustomFunctionLibrary.RegisterFunction(GetFuncName("listTables"), ListTables);
         CustomFunctionLibrary.RegisterFunction(GetFuncName("listKeys"), ListKeys);
-        
+
+        // CustomEntityFramework.AddComponent("Write",new DictionaryList<string, Type>()
+        // {
+        //     { "Key", typeof(string) },
+        //     {"Table", typeof(string)},
+        //     {"Value", typeof(Slot)},
+        // });
 
 
-        _jsonSettings = GetJsonTypeDefinition();
+            _jsonSettings = GetJsonTypeDefinition();
 
         Engine.Current.OnReady += () =>
         {
@@ -135,7 +140,8 @@ public class LocalKeyValueStore : NeosMod
                 return;
             }
             var collection = _db.GetCollection<ValueEntry>(Table);
-            var entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+            string typeString = $"{value.Type.FullName}, {value.Type.Assembly.GetName().Name}";//Type string without version number
+            var entry = collection.FindOne(x => x.Key == Key && x.Type == typeString);
 
             if (!config.GetValue(IGNORE_PERMISSIONS_KEY))
             {
@@ -145,7 +151,7 @@ public class LocalKeyValueStore : NeosMod
                 {
                     //Write to pending collection and commit later from userspace
                     collection = _db.GetCollection<ValueEntry>(Table + "_Pending");
-                    entry = collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+                    entry = collection.FindOne(x => x.Key == Key && x.Type == typeString);
                 }
             }
 
@@ -173,7 +179,7 @@ public class LocalKeyValueStore : NeosMod
             {
                 if (config.GetValue(ALLOW_PUBLIC_CREATION_KEY))
                 {
-                    collection.Insert(new ValueEntry { Key = Key, Value = valueJson, Type = value.Type.AssemblyQualifiedName });
+                    collection.Insert(new ValueEntry { Key = Key, Value = valueJson, Type = typeString });
                 }
             }
         }
@@ -189,19 +195,31 @@ public class LocalKeyValueStore : NeosMod
         {
             bool isUserspace = _slot.World.IsUserspace();
             DynamicVariable value = _space.GetVariable("Value");
+            Type type = value.Type;
+            string typeString = $"{type.FullName}, {type.Assembly.GetName().Name}";
+            
             var collection = _db.GetCollection<ValueEntry>(Table);
             var collectionPending = _db.GetCollection<ValueEntry>(Table + "_Pending");
             
             ValueEntry entry = ReadPending
-                ? collectionPending.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName) ?? 
-                  collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName)
-                : collection.FindOne(x => x.Key == Key && x.Type == value.Type.AssemblyQualifiedName);
+                ? collectionPending.FindOne(x => x.Key == Key && x.Type == typeString) ?? 
+                  collection.FindOne(x => x.Key == Key && x.Type == typeString)
+                : collection.FindOne(x => x.Key == Key && x.Type == typeString);
             
-            if (!config.GetValue(IGNORE_PERMISSIONS_KEY) && !isUserspace && entry?.Permissions.HasFlag(PublicPermissions.Read) != true) entry = null; // No read permission
+            if (!config.GetValue(IGNORE_PERMISSIONS_KEY) && !isUserspace && entry?.Permissions.HasFlag(PublicPermissions.Read) != true) {
+                Msg("No read permission!");
+                entry = null; // No read permission
+            }
             
             if (entry != null)
             {
-                Type type = Type.GetType(entry.Type);
+                Msg("Entry found.");
+                
+                if (type == null)
+                {
+                    Error($"Type {entry.Type} not found!");
+                    return _slot;
+                }
 
                 if (type == typeof(Slot))
                 {
@@ -217,6 +235,7 @@ public class LocalKeyValueStore : NeosMod
             }
             else if (value.Type == typeof(Slot))
             {
+                Msg("Entry not found.");
                 value.Value = null;
                 return null;
             }
